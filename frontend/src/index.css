@@ -1,0 +1,39 @@
+@import 'tailwindcss';
+
+/* Dark trading-terminal palette. Numbers are the content here, so the surface
+   stays low-contrast and colour is reserved for signal: long/short, risk signs,
+   and arbitrage violations. */
+@theme {
+  --color-term-bg: #0b0f14;
+  --color-term-panel: #121820;
+  --color-term-border: #1f2933;
+  --color-term-muted: #7d8b9a;
+  --color-term-text: #e3e9ef;
+  --color-term-accent: #38bdf8;
+  --color-term-long: #34d399;
+  --color-term-short: #f87171;
+  --color-term-warn: #fbbf24;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background-color: var(--color-term-bg);
+  color: var(--color-term-text);
+  font-feature-settings: 'tnum' 1; /* tabular figures keep columns of numbers aligned */
+}
+
+/* Spinners on number inputs misalign the right-aligned values. */
+input[type='number']::-webkit-inner-spin-button,
+input[type='number']::-webkit-outer-spin-button {
+  appearance: none;
+  margin: 0;
+}
+input[type='number'] {
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
