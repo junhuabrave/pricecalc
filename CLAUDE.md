@@ -5,9 +5,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 An options market-making sandbox: a Python quantitative core exposed over FastAPI,
-driven by a React SPA. Four scenarios are planned as separate tabs — **Pricer**
-(implemented), **Arbitrage**, **Strategy**, and **Market making** (scaffolded, see
-`ComingSoon` panels for their specs). Market data is simulated; there is no live feed.
+driven by a React SPA. Four scenarios are separate tabs — **Pricer** and
+**Arbitrage** are implemented; **Strategy** and **Market making** are scaffolded
+(see the `ComingSoon` panels for their specs). Market data is simulated; there is
+no live feed, but `core/marketdata/base.py` defines the `ChainFeed` protocol a
+live adapter would satisfy.
 
 ## Commands
 
@@ -58,6 +60,26 @@ will build on.
 `staleTime: Infinity` (`frontend/src/lib/pricing.ts`). Query keys are the request
 objects themselves. There is nothing to invalidate; if a result looks stale, the
 inputs differ.
+
+**Arbitrage findings execute at bid/ask, never mids, and must be self-financing.**
+Every check in `core/arbitrage.py` buys at `ask` and sells at `bid`; a violation
+priced off mids is a spread you cannot cross. Each `Violation` also carries the
+`Leg`s of its replicating trade, and `sum(leg.cash_flow) == violation.profit` is
+asserted in the tests. If you add a check, add both — a finding without a
+financing trade is not a finding.
+
+**A clean chain must produce zero findings.** `generate_chain()` prices off one
+smile, so it satisfies every static bound by construction. The false-positive
+suite sweeps rates, dividends, skews, spreads and ladder density asserting an
+empty result. That negative test is what makes the scanner trustworthy; don't
+weaken it to make a new check pass.
+
+**Calendar checks are deliberately skipped when `div_yield > 0`.** With a
+dividend yield a longer-dated European call can legitimately trade below a
+shorter-dated one, so the ordering is not a bound. The summary reports
+`calendar_checks_skipped` rather than emitting false positives. The general
+condition needs total implied variance at matched forward-moneyness — an
+interpolated surface, not raw quotes.
 
 **The market state vector is global.** `useMarketStore` (Zustand) holds spot, strike,
 rate, dividend yield, vol, expiry and option type. The Pricer writes it; the other

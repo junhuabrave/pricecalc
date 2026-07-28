@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from pricecalc.api.routes_arbitrage import router as arbitrage_router
 from pricecalc.api.routes_pricing import router as pricing_router
 from pricecalc.config import settings
 
@@ -22,6 +23,7 @@ app.add_middleware(
 
 # Every router mounts under /api so the Vite dev proxy has a single prefix to forward.
 app.include_router(pricing_router, prefix="/api")
+app.include_router(arbitrage_router, prefix="/api")
 
 
 @app.get("/api/health", tags=["meta"])
