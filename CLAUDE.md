@@ -22,6 +22,7 @@ poetry run pricecalc-api                       # uvicorn on :8000, OpenAPI at /d
 poetry run pytest                              # full suite
 poetry run pytest tests/unit -v                # unit only
 poetry run pytest -k test_put_call_parity      # single test by name
+poetry run pytest tests/unit/test_arbitrage.py::TestPutCallParity::test_fair_parity_is_silent
 poetry run ruff check --fix . && poetry run black .
 poetry run mypy src/                           # strict mode
 
@@ -34,7 +35,18 @@ pnpm lint && pnpm typecheck && pnpm build
 ```
 
 Both servers must be running for the UI to price anything — the frontend has no
-local fallback.
+local fallback. After changing a router, restart uvicorn; it runs without
+`--reload` unless `DEBUG=true`.
+
+**Run the CI gate, not just the fix commands, before pushing.** CI runs
+`black --check .`, which *verifies*; `black .` *reformats* and always passes
+locally, so a formatting failure only shows up on the PR:
+
+```bash
+cd backend  && poetry run ruff check . && poetry run black --check . \
+            && poetry run mypy src/ && poetry run pytest
+cd frontend && pnpm lint && pnpm typecheck && pnpm test:run && pnpm build
+```
 
 ## Architecture
 
@@ -53,8 +65,8 @@ there and add a matching FD test — the scaling is the part that breaks.
 **Prices that admit no implied vol are an arbitrage signal, not an error to swallow.**
 `implied_vol()` checks the no-arbitrage band before root-finding and raises
 `NoImpliedVolError`; the route turns that into a 422 carrying the band. Do not clamp
-to a fallback vol — the rejection is the product feature that the Arbitrage tab
-will build on.
+to a fallback vol — the rejection is a product feature, and the same
+bounds (`price_bounds()`) are what `check_absolute_bounds()` scans with.
 
 **Pricing is a pure function of its inputs**, so TanStack Query caches results with
 `staleTime: Infinity` (`frontend/src/lib/pricing.ts`). Query keys are the request
@@ -81,6 +93,16 @@ shorter-dated one, so the ordering is not a bound. The summary reports
 condition needs total implied variance at matched forward-moneyness — an
 interpolated surface, not raw quotes.
 
+**The simulator is the test oracle, so its determinism is load-bearing.**
+`generate_chain(seed=…)` is fully reproducible — the same request yields the same
+chain and therefore the same findings, which is why `/api/arbitrage/scan` takes
+generation parameters rather than a chain. Planted mispricings are *solved*
+against the bound they target (set the bid to exactly what the check compares
+against, plus an edge), not random markups — a percentage bump on a cheap
+contract is absorbed by the spread and plants nothing. Plants are limited to one
+per expiry: two on the same expiry can cancel, because lifting a quote also
+widens its ask, which un-breaks a bound an earlier plant was solved against.
+
 **The market state vector is global.** `useMarketStore` (Zustand) holds spot, strike,
 rate, dividend yield, vol, expiry and option type. The Pricer writes it; the other
 three tabs are meant to read the same vector rather than keep their own copies.
@@ -103,6 +125,9 @@ three tabs are meant to read the same vector rather than keep their own copies.
 
 ## Gotchas
 
+- `exactOptionalPropertyTypes` is on, so passing an explicit `undefined` to an
+  optional prop is a type error, not a no-op. `valueClassName={cond ? 'x' : undefined}`
+  fails; use `''` or omit the prop with a spread.
 - `NumberField` holds a draft string while focused. Binding a number straight to the
   input makes `"0."` unrepresentable and the field fights the user mid-keystroke.
 - Recharts' tooltip `formatter`/`labelFormatter` are typed loosely; parameters are
