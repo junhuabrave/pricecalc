@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from itertools import pairwise
 
 import pytest
 from fastapi.testclient import TestClient
@@ -80,7 +81,7 @@ class TestSweep:
         """Positive gamma means the call delta rises with spot, everywhere."""
         pts = client.post("/api/pricing/sweep", json={**ATM_CALL, "steps": 41}).json()["points"]
         deltas = [p["delta"] for p in pts]
-        assert all(b >= a for a, b in zip(deltas[:-1], deltas[1:], strict=True))
+        assert all(b >= a for a, b in pairwise(deltas))
         assert deltas[0] < 0.05 and deltas[-1] > 0.95
 
     def test_price_dominates_intrinsic(self, client):
