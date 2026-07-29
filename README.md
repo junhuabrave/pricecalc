@@ -90,9 +90,14 @@ Two rules make the findings real rather than cosmetic:
   tests, so a finding you could not actually put on fails the build.
 
 The generated chain is arbitrage-free by construction, so a clean scan **must**
-return nothing. That negative result is the scanner's own regression test, and
-it's exposed in the UI: dial planted mispricings to zero and the panel should go
-quiet. Anything it reports there is a bug in the scanner, not a signal.
+return nothing. Getting there needs a repair step, not just a smile — an
+arbitrary smile is *not* arbitrage-free, and property-based testing caught a
+steep wing pricing a far strike above a nearer one. Calls are priced off the
+smile, projected onto the no-arbitrage set in strike, then puts follow by parity.
+
+That empty result is the scanner's own regression test, and it's exposed in the
+UI: dial planted mispricings to zero and the panel should go quiet. Anything it
+reports there is a bug in the scanner, not a signal.
 
 One deliberate silence: **calendar checks are skipped when the dividend yield is
 non-zero**, because a longer-dated European call can then legitimately trade
@@ -101,12 +106,17 @@ says the check was skipped rather than handing you noise.
 
 ## Testing
 
-The maths is verified three independent ways: a textbook closed-form value, put-call
-parity across six market regimes, and central finite differences against every
-analytic Greek (which is what catches unit-scaling mistakes).
+The maths is verified four independent ways: a textbook closed-form value, put-call
+parity across six market regimes, central finite differences against every analytic
+Greek (which catches unit-scaling mistakes), and **property-based tests** that assert
+relations — parity, monotonicity, convexity, scale invariance, implied-vol round-trip
+— hold across thousands of generated markets rather than six chosen ones.
+
+That last layer earns its keep: it found a real defect on its first run, in the chain
+generator rather than the pricer.
 
 ```bash
-cd backend  && poetry run pytest        # 231 tests
+cd backend  && poetry run pytest        # 259 tests (incl. Hypothesis properties)
 cd frontend && pnpm test:run            # 14 tests
 ```
 

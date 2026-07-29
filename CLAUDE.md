@@ -80,10 +80,14 @@ priced off mids is a spread you cannot cross. Each `Violation` also carries the
 asserted in the tests. If you add a check, add both — a finding without a
 financing trade is not a finding.
 
-**A clean chain must produce zero findings.** `generate_chain()` prices off one
-smile, so it satisfies every static bound by construction. The false-positive
-suite sweeps rates, dividends, skews, spreads and ladder density asserting an
-empty result. That negative test is what makes the scanner trustworthy; don't
+**A clean chain must produce zero findings**, and that takes two steps. Pricing a
+ladder off a smile is *not* sufficient — an arbitrary smile is not
+arbitrage-free, and a steep wing prices a far strike above a nearer one
+(Hypothesis found this at spot 10, curvature 1.5). So `generate_chain()` prices
+calls off the smile, projects them onto the no-arbitrage set in strike via
+`enforce_no_arbitrage()`, and derives puts by parity rather than pricing them
+separately. Both the example suite and the property suite assert the empty
+result; that negative test is what makes the scanner trustworthy, so don't
 weaken it to make a new check pass.
 
 **Calendar checks are deliberately skipped when `div_yield > 0`.** With a
