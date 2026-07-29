@@ -1,9 +1,15 @@
 """A synthetic option chain, arbitrage-free by construction unless told otherwise.
 
-Prices come from Black-Scholes on a skewed smile, so the resulting chain
-satisfies every static bound the scanner tests. That is the point: a clean
-chain must produce **zero** findings, which makes the scanner falsifiable. Any
-violation it reports on a clean chain is a bug in the scanner, not a signal.
+A clean chain must produce **zero** findings from the scanner. That is what
+makes the scanner falsifiable: any violation reported on a clean chain is a bug
+in the scanner, not a signal.
+
+Getting there takes two steps, not one. Pricing a strike ladder off a smile is
+*not* enough — an arbitrary smile is not arbitrage-free, and a steep wing
+readily prices a far strike above a nearer one. Property-based testing caught
+exactly that. So call prices are priced off the smile and then projected onto
+the no-arbitrage set in strike (see `enforce_no_arbitrage`), with puts derived
+by parity rather than priced separately.
 
 Mispricings are then injected deliberately, one per requested violation, with a
 recorded ground truth. Tests assert the scanner finds exactly what was planted.
@@ -69,6 +75,79 @@ class SimulatedChain:
         return self.chain
 
 
+def enforce_no_arbitrage(
+    strikes: list[float],
+    calls: list[float],
+    spot: float,
+    disc_r: float,
+    disc_q: float,
+    max_passes: int = 64,
+) -> list[float]:
+    """Project a call curve onto the static no-arbitrage set, in strike.
+
+    **Why this exists.** Pricing a ladder off an arbitrary smile does *not*
+    produce an arbitrage-free curve — a steep enough wing prices a far strike
+    at so much more vol that it overtakes a nearer one, which is a genuine
+    monotonicity violation. Property-based testing found exactly that case
+    (spot 10, curvature 1.5: the 5 put came out richer than the 7.5 put). Only
+    parameterisations with their own no-arbitrage conditions, such as SVI with
+    the Gatheral-Jacquier constraints, avoid this by construction.
+
+    Rather than restrict the smile to a safe corner, the price curve is
+    repaired directly. Four conditions are imposed:
+
+    1. Each price sits within its absolute bounds.
+    2. Calls are non-increasing in strike.
+    3. A vertical spread costs no more than the discounted strike gap
+       (equivalently, the slope is no steeper than ``-exp(-r·tau)``).
+    4. The curve is convex in strike.
+
+    Puts are then derived by put-call parity rather than priced separately, so
+    parity holds exactly and the put curve inherits convexity — adding a linear
+    function of the strike leaves second differences unchanged.
+
+    Convergence: the clamp in step 1 is applied once, and every later operation
+    only *lowers* prices, so the iteration is monotone and bounded below by the
+    lower-bound curve. That curve is itself convex and decreasing, so none of
+    the repairs can push a price beneath it.
+    """
+    c = list(calls)
+    n = len(c)
+    floors = [max(spot * disc_q - k * disc_r, 0.0) for k in strikes]
+    ceiling = spot * disc_q
+
+    for i in range(n):
+        c[i] = min(max(c[i], floors[i]), ceiling)
+
+    for _ in range(max_passes):
+        changed = False
+
+        for i in range(1, n - 1):
+            span = strikes[i + 1] - strikes[i - 1]
+            if span <= 0.0:
+                continue
+            w_lo = (strikes[i + 1] - strikes[i]) / span
+            w_hi = (strikes[i] - strikes[i - 1]) / span
+            chord = w_lo * c[i - 1] + w_hi * c[i + 1]
+            if c[i] > chord:
+                c[i] = chord
+                changed = True
+
+        for i in range(n - 1):
+            if c[i + 1] > c[i]:
+                c[i + 1] = c[i]
+                changed = True
+            gap = (strikes[i + 1] - strikes[i]) * disc_r
+            if c[i] - c[i + 1] > gap:
+                c[i] = c[i + 1] + gap
+                changed = True
+
+        if not changed:
+            break
+
+    return c
+
+
 def _half_spread(mid: float, vega: float, spread_bps: float, min_tick: float) -> float:
     """Spread widens with vega and with the option's own price.
 
@@ -116,26 +195,40 @@ def generate_chain(
     quotes: list[Quote] = []
     for tau in expiries:
         forward = spot * math.exp((rate - div_yield) * tau)
-        strikes = np.linspace(spot * (1.0 - strike_span), spot * (1.0 + strike_span), strike_count)
+        disc_r = math.exp(-rate * tau)
+        disc_q = math.exp(-div_yield * tau)
 
-        for raw_strike in strikes:
-            strike = round(float(raw_strike), 2)
+        ladder = np.linspace(spot * (1.0 - strike_span), spot * (1.0 + strike_span), strike_count)
+        # Rounding can collide on a low-priced underlying; keep strikes unique.
+        strikes = sorted({round(float(s), 2) for s in ladder if s > 0.0})
+
+        call_mids = [
+            price(
+                spot,
+                k,
+                rate,
+                div_yield,
+                smile.vol(math.log(k / forward), tau),
+                tau,
+                OptionType.CALL,
+            )
+            for k in strikes
+        ]
+        call_mids = enforce_no_arbitrage(strikes, call_mids, spot, disc_r, disc_q)
+
+        for strike, call_mid in zip(strikes, call_mids, strict=True):
             k = math.log(strike / forward)
-            vol = smile.vol(k, tau)
+            # Parity, not a second Black-Scholes call: the repair above moved the
+            # call curve, and pricing the put independently would desynchronise them.
+            put_mid = call_mid - spot * disc_q + strike * disc_r
 
-            for opt in (OptionType.CALL, OptionType.PUT):
-                mid = price(spot, strike, rate, div_yield, vol, tau, opt)
-                # Vega drives the risk component of the spread.
-                vega = (
-                    spot
-                    * math.exp(-div_yield * tau)
-                    * math.sqrt(tau)
-                    * math.exp(-0.5 * k * k)
-                    / 2.5
-                )
-                half = _half_spread(mid, vega, spread_bps, min_tick)
-                bid = max(0.0, round(mid - half, 4))
-                ask = round(mid + half, 4)
+            # Vega drives the risk component of the spread.
+            vega = spot * math.exp(-div_yield * tau) * math.sqrt(tau) * math.exp(-0.5 * k * k) / 2.5
+            for opt, mid in ((OptionType.CALL, call_mid), (OptionType.PUT, put_mid)):
+                clean = max(0.0, mid)
+                half = _half_spread(clean, vega, spread_bps, min_tick)
+                bid = max(0.0, round(clean - half, 4))
+                ask = round(clean + half, 4)
                 quotes.append(Quote(tau=tau, strike=strike, option_type=opt, bid=bid, ask=ask))
 
     planted: list[PlantedViolation] = []
