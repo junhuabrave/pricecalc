@@ -9,7 +9,7 @@ import { Tabs, type TabDef } from '@/components/ui/Tabs'
 const TABS = [
   { id: 'pricer', label: 'Pricer' },
   { id: 'arbitrage', label: 'Arbitrage' },
-  { id: 'strategy', label: 'Strategy', comingSoon: true },
+  { id: 'strategy', label: 'Strategy' },
   { id: 'marketmaking', label: 'Market making', comingSoon: true },
 ] as const satisfies readonly TabDef[]
 
