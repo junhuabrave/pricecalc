@@ -33,6 +33,7 @@ httpx = "^0.28"
 ruff = "^0.8"
 black = "^24.10"
 mypy = "^1.13"
+hypothesis = "^6.0"
 
 [tool.ruff]
 line-length = 100
