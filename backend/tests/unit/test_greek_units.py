@@ -166,15 +166,6 @@ class TestDegenerateVolatility:
             expected, rel=1e-12
         )
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "greeks() collapses every sensitivity to zero whenever vol <= MIN_VOL, but that "
-            "limit only holds at tau = 0. With tau > 0 and zero vol the option is a forward: "
-            "delta is exp(-q*tau), not 1, and rho and theta are non-zero. price() gets this "
-            "right, so greeks() contradicts the pricer it accompanies."
-        ),
-    )
     def test_zero_vol_greeks_are_those_of_a_forward(self):
         """A certain in-the-money call is ``e^(-q*tau)`` shares less a bond.
 
@@ -190,20 +181,22 @@ class TestDegenerateVolatility:
         assert g.rho == pytest.approx(strike * tau * math.exp(-rate * tau) / 100.0, rel=1e-9)
         assert g.theta != 0.0
 
-    def test_the_limit_from_above_disagrees_with_the_value_at_zero(self):
-        """The discontinuity, stated without reference to what is correct.
+    def test_the_value_at_zero_matches_the_limit_from_above(self):
+        """Zero volatility is continuous with its own neighbourhood.
 
-        Approaching zero vol the Greeks tend to the forward's; at exactly zero
-        they jump to the expiry-day collapse. One of the two is wrong, and it
-        is not the limit.
+        Regression: the guard once collapsed `vol = 0` into the expiry-day case,
+        so the Greeks jumped discontinuously to a step-function delta with no
+        rho and no theta — while the limit as `vol -> 0+` gave the forward's
+        Greeks, and `price()` agreed with the limit. The function contradicted
+        its own pricer at exactly one point.
         """
         near = bs.greeks(**{**self.ITM_CALL, "vol": 1e-8}, option_type=OptionType.CALL)
         at_zero = bs.greeks(**self.ITM_CALL, option_type=OptionType.CALL)
 
         assert near.delta == pytest.approx(math.exp(-0.03), rel=1e-9)
-        assert near.rho == pytest.approx(100.0 * math.exp(-0.05) / 100.0, rel=1e-9)
-        assert at_zero.delta != pytest.approx(near.delta, rel=1e-6)
-        assert at_zero.rho != pytest.approx(near.rho, rel=1e-6)
+        assert at_zero.delta == pytest.approx(near.delta, rel=1e-6)
+        assert at_zero.rho == pytest.approx(near.rho, rel=1e-6)
+        assert at_zero.theta == pytest.approx(near.theta, rel=1e-6)
 
     @pytest.mark.parametrize("opt", TYPES)
     def test_expiry_day_collapse_is_correct(self, opt):

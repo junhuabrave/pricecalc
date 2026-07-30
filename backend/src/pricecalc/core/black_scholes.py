@@ -172,15 +172,36 @@ def greeks(
     _validate(spot, strike, tau)
     phi = option_type.sign
 
-    # At/after expiry every sensitivity is zero except a step-function delta.
-    if tau <= MIN_TIME or vol <= MIN_VOL:
-        itm = phi * (forward_price(spot, rate, div_yield, max(tau, 0.0)) - strike) > 0
+    # At expiry every sensitivity vanishes except a step-function delta.
+    if tau <= MIN_TIME:
+        itm = phi * (spot - strike) > 0
         return Greeks(
             delta=float(phi) if itm else 0.0,
             gamma=0.0,
             vega=0.0,
             theta=0.0,
             rho=0.0,
+            vanna=0.0,
+            volga=0.0,
+        )
+
+    # Zero volatility with time left is a *different* limit, and collapsing the
+    # two was a bug: the payoff is certain, but it is not immediate. An
+    # in-the-money option is then a forward contract on the difference, and a
+    # forward has delta, rho and theta — only the volatility-driven sensitivities
+    # disappear. Reported values are the limits as vol -> 0+, so `greeks()`
+    # agrees with `price()`, which already handles this case.
+    if vol <= MIN_VOL:
+        disc_r = math.exp(-rate * tau)
+        disc_q = math.exp(-div_yield * tau)
+        if phi * (forward_price(spot, rate, div_yield, tau) - strike) <= 0:
+            return Greeks(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+        return Greeks(
+            delta=phi * disc_q,
+            gamma=0.0,
+            vega=0.0,
+            theta=phi * (div_yield * spot * disc_q - rate * strike * disc_r) / 365.0,
+            rho=phi * strike * tau * disc_r / 100.0,
             vanna=0.0,
             volga=0.0,
         )

@@ -96,22 +96,9 @@ class TestCalendarDomain:
         far_mark = price(terminal_spot, 70.0, -0.05, 0.0, FLAT_VOL, remaining, OptionType.CALL)
         assert assigned + far_mark + credit < 0.0
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "check_calendars gates only on div_yield, but the ordering it enforces also "
-            "requires rate >= 0. At a negative rate — which the API accepts down to -0.5 — an "
-            "arbitrage-free chain produces phantom findings, breaking the documented "
-            "'a clean chain must produce zero findings' invariant."
-        ),
-    )
     def test_negative_rate_chain_is_silent(self):
         assert arbitrage.check_calendars(flat_chain(100.0, -0.05, 0.0)) == []
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="Same defect, seen through the full scan rather than the single check.",
-    )
     def test_a_clean_negative_rate_chain_produces_no_findings_at_all(self):
         assert arbitrage.scan(flat_chain(100.0, -0.05, 0.0)) == []
 
@@ -150,14 +137,6 @@ class TestVerticalCoverage:
         assert 1.0 - 1.0 <= 0.0  # call 110 bid vs call 100 ask
         assert 2.0 - 3.0 <= 0.0  # call 120 bid vs call 110 ask
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "check_verticals compares only pairwise-adjacent strikes, so a monotonicity "
-            "violation between non-adjacent strikes is missed whenever the intervening "
-            "strike's spread is wide enough to mask it."
-        ),
-    )
     def test_the_scanner_finds_it(self):
         chain = Chain(spot=100.0, rate=0.0, div_yield=0.0, quotes=self.WIDE_MIDDLE)
         found = arbitrage.check_verticals(chain)

@@ -92,14 +92,6 @@ class TestBreakevensAreReallyRoots:
         """Bought at 100, you are flat at 100 — the most elementary breakeven there is."""
         assert strategy.payoff((stock(1.0, 100.0),), 100.0) == pytest.approx(0.0)
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "breakevens() solves the segment beyond the last kink only when kink_points() is "
-            "non-empty. A position with no option legs has no kinks, so its single linear "
-            "segment is never solved and the entry-price breakeven is dropped entirely."
-        ),
-    )
     @pytest.mark.parametrize("quantity", [1.0, -1.0, 2.5])
     def test_a_stock_only_position_reports_its_breakeven(self, quantity):
         legs = (stock(quantity, 100.0),)
@@ -190,30 +182,27 @@ class TestMultiExpiryWings:
         far = strategy.payoff(self.CALENDAR, 10_000.0, self.RATE, 0.0)
         assert far == pytest.approx(near, abs=1e-6)
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "asymptotic_slopes() sums terminal-payoff slopes (1.0 per long call) even when a "
-            "leg survives the horizon and is marked rather than settled. A calendar on a "
-            "dividend-paying underlying therefore reports a capped loss, while the real wing "
-            "slope is exp(-q*dt) - 1 < 0 and the loss is unbounded. extremes() compounds it by "
-            "searching a grid that stops at 2.5x the highest strike."
-        ),
-    )
     def test_the_loss_is_reported_as_unbounded(self):
         _, max_loss = strategy.extremes(self.CALENDAR, self.RATE, self.DIV)
         assert max_loss.unbounded
         assert max_loss.value == -math.inf
 
-    def test_the_reported_loss_is_beaten_inside_a_plausible_spot_range(self):
-        """Independent of the fix, the number on the screen is not a bound.
+    def test_the_loss_really_does_keep_deepening_with_spot(self):
+        """Unboundedness stated without reference to infinity.
 
-        Stated without reference to infinity: a spot move well inside what a
-        payoff chart would show already loses more than the reported maximum.
+        Regression: `extremes` once reported this loss capped at a finite
+        number that a spot of 1,000 already beat, because the wing slope summed
+        terminal-payoff slopes for a leg that is marked rather than settled.
+        The dividend yield makes the far call's mark grow at `e^(-q*dt)` per
+        unit of spot, strictly slower than the short near leg it is meant to
+        offset, so the position bleeds without limit as spot rises.
         """
-        _, max_loss = strategy.extremes(self.CALENDAR, self.RATE, self.DIV)
-        assert not max_loss.unbounded  # the current, incorrect answer
-        assert strategy.payoff(self.CALENDAR, 1_000.0, self.RATE, self.DIV) < max_loss.value
+        losses = [
+            strategy.payoff(self.CALENDAR, s, self.RATE, self.DIV)
+            for s in (500.0, 1_000.0, 5_000.0, 20_000.0)
+        ]
+        assert all(b < a for a, b in pairwise(losses))
+        assert losses[-1] < losses[0] - 100.0
 
 
 class TestAsymptoticSlopeAlgebra:

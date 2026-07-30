@@ -25,7 +25,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from enum import StrEnum
-from itertools import combinations, pairwise
+from itertools import combinations
 
 from pricecalc.core.black_scholes import OptionType, price_bounds
 from pricecalc.core.chain import Chain
@@ -205,21 +205,21 @@ def check_put_call_parity(chain: Chain, min_edge: float = DEFAULT_MIN_EDGE) -> l
             if call is None or put is None:
                 continue
 
-            # Conversion: buy call, sell put, short e^(-q·tau) shares, lend K·e^(-r·tau).
+            # Reversal: buy call, sell put, short e^(-q·tau) shares, lend K·e^(-r·tau).
             # At expiry the synthetic delivers S_T - K and the short delivers -S_T,
             # leaving exactly -K, which the bond covers. Everything left is today's cash.
-            conversion = put.bid + chain.underlying_bid * disc_q - call.ask - strike * disc_r
-            if conversion > min_edge:
+            reversal_edge = put.bid + chain.underlying_bid * disc_q - call.ask - strike * disc_r
+            if reversal_edge > min_edge:
                 out.append(
                     Violation(
                         kind=ViolationKind.PUT_CALL_PARITY,
-                        summary=f"Conversion at {strike:g}, {tau:.4g}y locks {conversion:.4f}",
+                        summary=f"Reversal at {strike:g}, {tau:.4g}y locks {reversal_edge:.4f}",
                         detail=(
                             "The synthetic long (long call, short put) is cheaper than the stock "
                             "it replicates. Buy the synthetic, short the stock against it, and "
                             "lend the strike. Every path cancels; the credit is riskless."
                         ),
-                        profit=conversion,
+                        profit=reversal_edge,
                         legs=(
                             Leg(call.label, 1.0, call.ask),
                             Leg(put.label, -1.0, put.bid),
@@ -231,18 +231,18 @@ def check_put_call_parity(chain: Chain, min_edge: float = DEFAULT_MIN_EDGE) -> l
                     )
                 )
 
-            # Reversal: the mirror image.
-            reversal = call.bid + strike * disc_r - put.ask - chain.underlying_ask * disc_q
-            if reversal > min_edge:
+            # Conversion: the mirror image.
+            conversion_edge = call.bid + strike * disc_r - put.ask - chain.underlying_ask * disc_q
+            if conversion_edge > min_edge:
                 out.append(
                     Violation(
                         kind=ViolationKind.PUT_CALL_PARITY,
-                        summary=f"Reversal at {strike:g}, {tau:.4g}y locks {reversal:.4f}",
+                        summary=f"Conversion at {strike:g}, {tau:.4g}y locks {conversion_edge:.4f}",
                         detail=(
                             "The synthetic long is richer than the stock. Sell the synthetic "
                             "(sell call, buy put), buy the stock, and borrow the strike."
                         ),
-                        profit=reversal,
+                        profit=conversion_edge,
                         legs=(
                             Leg(call.label, -1.0, call.bid),
                             Leg(put.label, 1.0, put.ask),
@@ -274,7 +274,11 @@ def check_verticals(chain: Chain, min_edge: float = DEFAULT_MIN_EDGE) -> list[Vi
         disc_r = math.exp(-chain.rate * tau)
         strikes = chain.strikes(tau)
 
-        for lo, hi in pairwise(strikes):
+        # Every ordered pair, not just neighbours. A crossable edge between
+        # non-adjacent strikes is masked when the intervening strike's spread
+        # is wide, and `check_butterflies` already pays for `combinations`,
+        # so restricting this one bought nothing.
+        for lo, hi in combinations(strikes, 2):
             gap_pv = (hi - lo) * disc_r
 
             c_lo, c_hi = chain.get(tau, lo, OptionType.CALL), chain.get(tau, hi, OptionType.CALL)
@@ -431,18 +435,27 @@ def check_butterflies(chain: Chain, min_edge: float = DEFAULT_MIN_EDGE) -> list[
 def check_calendars(chain: Chain, min_edge: float = DEFAULT_MIN_EDGE) -> list[Violation]:
     """Longer-dated options dominate shorter-dated ones at the same strike.
 
-    **Only valid without dividends, and this check returns nothing when
-    ``div_yield`` is non-zero.** With a dividend yield the result genuinely
-    fails: holding a call forgoes the dividends the stock pays, so a
-    longer-dated European call can legitimately trade below a shorter-dated one
-    and the "violation" would be a false positive.
+    **Two conditions are required, and this check returns nothing unless both
+    hold: no dividends, and a non-negative rate.**
 
-    The general condition that survives dividends is stated on total implied
-    variance at matched forward-moneyness, which needs an interpolated surface
-    rather than raw quotes. Returning nothing is the honest answer here; the
-    caller is told the check was skipped rather than being handed noise.
+    With a dividend yield the ordering genuinely fails — holding a call forgoes
+    the dividends the stock pays, so a longer-dated European call can
+    legitimately trade below a shorter-dated one.
+
+    A *negative* rate breaks it just as surely, which is easy to miss. The far
+    call's floor is ``S - K*exp(-r*dt)``, and that dominates the near call's
+    intrinsic ``(S - K)+`` only while ``exp(-r*dt) <= 1``. Below zero the
+    discount factor exceeds one, the floor drops beneath the near option's
+    intrinsic, and the ordering is no longer a bound. Gating on dividends alone
+    produced phantom findings on a perfectly consistent chain at ``r = -5%``,
+    which is exactly the failure a screening tool cannot afford.
+
+    The general condition surviving both is stated on total implied variance at
+    matched forward-moneyness, which needs an interpolated surface rather than
+    raw quotes. Returning nothing is the honest answer; the caller is told the
+    check was skipped rather than handed noise.
     """
-    if abs(chain.div_yield) > 0.0:
+    if abs(chain.div_yield) > 0.0 or chain.rate < 0.0:
         return []
 
     out: list[Violation] = []
