@@ -5,9 +5,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 An options market-making sandbox: a Python quantitative core exposed over FastAPI,
-driven by a React SPA. Four scenarios are separate tabs — **Pricer** and
-**Arbitrage** are implemented; **Strategy** and **Market making** are scaffolded
-(see the `ComingSoon` panels for their specs). Market data is simulated; there is
+driven by a React SPA. Four scenarios are separate tabs — **Pricer**,
+**Arbitrage** and **Strategy** are implemented; **Market making** is scaffolded
+(see its `ComingSoon` panel for the spec). Market data is simulated; there is
 no live feed, but `core/marketdata/base.py` defines the `ChainFeed` protocol a
 live adapter would satisfy.
 
@@ -102,6 +102,15 @@ against, plus an edge), not random markups — a percentage bump on a cheap
 contract is absorbed by the spread and plants nothing. Plants are limited to one
 per expiry: two on the same expiry can cancel, because lifting a quote also
 widens its ask, which un-breaks a bound an earlier plant was solved against.
+
+**Strategy payoffs are solved, not sampled — but only for one expiry.** With a
+single expiry the payoff is piecewise linear (kinks at strikes), so
+`breakevens()` interpolates exactly and `extremes()` reads the kinks plus the
+asymptotic slope. With several expiries, `payoff()` settles only the legs
+reaching the nearest horizon and *marks* the rest with Black-Scholes over their
+remaining life; the curve is then smooth, so roots are bisected on a grid and
+`StrategyAnalysis.exact` is False. Settling every leg at once flattens a
+calendar to a constant — if a payoff diagram goes flat, that is the bug.
 
 **The market state vector is global.** `useMarketStore` (Zustand) holds spot, strike,
 rate, dividend yield, vol, expiry and option type. The Pricer writes it; the other
