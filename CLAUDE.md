@@ -85,9 +85,12 @@ suite sweeps rates, dividends, skews, spreads and ladder density asserting an
 empty result. That negative test is what makes the scanner trustworthy; don't
 weaken it to make a new check pass.
 
-**Calendar checks are deliberately skipped when `div_yield > 0`.** With a
-dividend yield a longer-dated European call can legitimately trade below a
-shorter-dated one, so the ordering is not a bound. The summary reports
+**Calendar checks need `div_yield == 0` AND `rate >= 0`; both gates matter.**
+A dividend yield breaks the ordering because holding a call forgoes dividends.
+A *negative* rate breaks it just as surely and is easy to miss: the far call's
+floor is `S - K*exp(-r*dt)`, which dominates the near option's intrinsic only
+while the discount factor is at most one. Gating on dividends alone produced
+eight phantom findings on a consistent chain at `r = -5%`. The summary reports
 `calendar_checks_skipped` rather than emitting false positives. The general
 condition needs total implied variance at matched forward-moneyness — an
 interpolated surface, not raw quotes.
@@ -101,6 +104,12 @@ against, plus an edge), not random markups — a percentage bump on a cheap
 contract is absorbed by the spread and plants nothing. Plants are limited to one
 per expiry: two on the same expiry can cancel, because lifting a quote also
 widens its ask, which un-breaks a bound an earlier plant was solved against.
+
+**A leg past the horizon is marked, not settled — and that changes its wing
+slope.** `asymptotic_slopes()` takes `div_yield` because a surviving call's mark
+grows at `exp(-q*dt)` per unit of spot, not at 1. Treating it as settled made a
+calendar's unbounded loss look capped. The bug is invisible at `q = 0`, where the
+factor is one, so test multi-expiry structures with a dividend yield.
 
 **Strategy payoffs are solved, not sampled — but only for one expiry.** With a
 single expiry the payoff is piecewise linear (kinks at strikes), so

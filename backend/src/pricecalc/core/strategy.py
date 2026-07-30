@@ -223,23 +223,38 @@ def net_greeks(legs: tuple[StrategyLeg, ...], spot: float, rate: float, div_yiel
     return Greeks(**totals)
 
 
-def asymptotic_slopes(legs: tuple[StrategyLeg, ...]) -> tuple[float, float]:
+def asymptotic_slopes(legs: tuple[StrategyLeg, ...], div_yield: float = 0.0) -> tuple[float, float]:
     """Payoff slope as spot runs to infinity, and as it falls to zero.
 
-    Deep in the money a call moves one-for-one with spot and a put is dead;
-    deep out the reverse. Summing those limits gives the wing slopes, and the
-    sign of the upper one decides whether profit or loss is unbounded.
+    A leg that *settles* at the horizon moves one-for-one deep in the money. A
+    leg that is only *marked* does not: deep in the money its value tends to
+    ``S*exp(-q*dt) - K*exp(-r*dt)``, so it grows at ``exp(-q*dt)`` per unit of
+    spot, not at 1.
+
+    Ignoring that made unbounded risk look capped. A calendar at ``q = 6%`` has
+    a true upper slope of ``exp(-0.06*0.75) - 1 = -0.044`` and therefore
+    unbounded loss; treating the far leg as settled cancelled the two legs to
+    exactly zero and reported the loss capped. With ``q = 0`` the factor is one
+    and the old answer happened to be right, which is why it went unnoticed.
     """
+    horizon = horizon_tau(legs)
     up = 0.0
     down = 0.0
+
     for leg in legs:
-        if leg.kind is LegKind.CALL:
-            up += leg.quantity
-        elif leg.kind is LegKind.PUT:
-            down -= leg.quantity
-        else:
+        if leg.kind is LegKind.UNDERLYING:
             up += leg.quantity
             down += leg.quantity
+            continue
+
+        remaining = (leg.tau or 0.0) - horizon
+        factor = math.exp(-div_yield * remaining) if remaining > STRIKE_EPS else 1.0
+
+        if leg.kind is LegKind.CALL:
+            up += leg.quantity * factor
+        else:
+            down -= leg.quantity * factor
+
     return up, down
 
 
@@ -283,14 +298,16 @@ def breakevens(
         if p_left * p_right < 0.0:
             found.append(left + (right - left) * (-p_left) / (p_right - p_left))
 
-    # The unbounded segment to the right of the final kink.
-    slope_up, _ = asymptotic_slopes(legs)
-    if kinks and abs(slope_up) > STRIKE_EPS:
-        last = kinks[-1]
-        p_last = payoff(legs, last, rate, div_yield)
-        if p_last * slope_up < 0.0:
-            root = last - p_last / slope_up
-            if root > last + STRIKE_EPS:
+    # The unbounded segment beyond the final kink. Anchored at zero when there
+    # are no kinks at all: a stock-only position is one straight line over the
+    # whole domain, and gating this on `kinks` silently dropped its breakeven.
+    slope_up, _ = asymptotic_slopes(legs, div_yield)
+    if abs(slope_up) > STRIKE_EPS:
+        anchor = kinks[-1] if kinks else 0.0
+        p_anchor = payoff(legs, anchor, rate, div_yield)
+        if p_anchor * slope_up < 0.0:
+            root = anchor - p_anchor / slope_up
+            if root > anchor + STRIKE_EPS:
                 found.append(root)
 
     # Deduplicate by proximity rather than by rounding: a kink that is also a
@@ -368,7 +385,7 @@ def _extremes_over(
     candidates = [0.0, *candidate_spots]
     values = [(payoff(legs, s, rate, div_yield), s) for s in candidates]
 
-    slope_up, _ = asymptotic_slopes(legs)
+    slope_up, _ = asymptotic_slopes(legs, div_yield)
     best_value, best_spot = max(values)
     worst_value, worst_spot = min(values)
 
@@ -435,7 +452,7 @@ def analyse(
     if not legs:
         raise ValueError("a strategy needs at least one leg")
 
-    slope_up, slope_down = asymptotic_slopes(legs)
+    slope_up, slope_down = asymptotic_slopes(legs, div_yield)
     max_profit, max_loss = extremes(legs, rate, div_yield)
 
     anchors = [spot, *kink_points(legs)]

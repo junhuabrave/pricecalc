@@ -118,22 +118,28 @@ class TestPutCallParity:
         chain = self._chain(10.30, 10.40, 5.45, 5.55)
         assert arb.check_put_call_parity(chain) == []
 
-    def test_cheap_synthetic_is_a_conversion(self):
-        # Call offered far too cheap against the put bid.
+    def test_cheap_synthetic_is_a_reversal(self):
+        """Long call, short put, short stock is a *reversal* by convention.
+
+        The labels were originally the wrong way round: a conversion is long
+        stock plus a long put against a short call, and this is its mirror.
+        The cash flows were always right; only the name on the screen was not.
+        """
         chain = self._chain(6.00, 6.10, 5.45, 5.55)
         found = arb.check_put_call_parity(chain)
         assert len(found) == 1
         v = found[0]
         assert v.kind is ViolationKind.PUT_CALL_PARITY
-        assert "Conversion" in v.summary
+        assert "Reversal" in v.summary
         expected = 5.45 + 100.0 - 6.10 - 100.0 * math.exp(-0.05)
         assert v.profit == pytest.approx(expected, abs=1e-12)
 
-    def test_rich_synthetic_is_a_reversal(self):
+    def test_rich_synthetic_is_a_conversion(self):
+        """Long stock, long put, short call — the textbook conversion."""
         chain = self._chain(14.00, 14.10, 5.45, 5.55)
         found = arb.check_put_call_parity(chain)
         assert len(found) == 1
-        assert "Reversal" in found[0].summary
+        assert "Conversion" in found[0].summary
         expected = 14.00 + 100.0 * math.exp(-0.05) - 5.55 - 100.0
         assert found[0].profit == pytest.approx(expected, abs=1e-12)
 
