@@ -1,8 +1,10 @@
 name: CI
 
 on:
+  # Every pull request, whatever it targets. Restricting this to `main` meant a
+  # PR stacked on another feature branch got no CI at all — silently, with
+  # "no checks reported" rather than a failure.
   pull_request:
-    branches: [main]
   push:
     branches: [main]
 

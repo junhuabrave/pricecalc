@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from pricecalc.api.routes_arbitrage import router as arbitrage_router
+from pricecalc.api.routes_mm import router as mm_router
 from pricecalc.api.routes_pricing import router as pricing_router
 from pricecalc.api.routes_strategy import router as strategy_router
 from pricecalc.config import settings
@@ -26,6 +27,7 @@ app.add_middleware(
 app.include_router(pricing_router, prefix="/api")
 app.include_router(arbitrage_router, prefix="/api")
 app.include_router(strategy_router, prefix="/api")
+app.include_router(mm_router, prefix="/api")
 
 
 @app.get("/api/health", tags=["meta"])

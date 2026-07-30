@@ -1,8 +1,8 @@
 # pricecalc
 
 An options market-making sandbox — price European options, invert quotes back to
-implied volatility, scan a chain for static arbitrage, and build multi-leg
-structures. Market-making simulation is the remaining tab.
+implied volatility, scan a chain for static arbitrage, build multi-leg
+structures, and simulate quoting a book.
 
 Python quantitative core behind FastAPI, React SPA on top. Market data is simulated;
 no vendor feed or API key is required to run anything.
@@ -14,10 +14,7 @@ no vendor feed or API key is required to run anything.
 | **Pricer** | ✅ Implemented | Black-Scholes-Merton price, seven Greeks, implied vol with no-arbitrage band checking, spot sweeps |
 | **Arbitrage** | ✅ Implemented | Absolute bounds, put-call parity, vertical monotonicity + slope caps, butterfly convexity, calendar ordering — each finding with its replicating trade and locked-in profit |
 | **Strategy** | ✅ Implemented | 11 presets at fair value, net Greeks, exact breakevens and extremes, payoff vs mark-to-market |
-| **Market making** | 🚧 Scaffolded | Surface-driven quoting, inventory skew, simulated flow, P&L attribution |
-
-The scaffolded tabs render their own specs in-app, so the intended scope is visible
-without reading the source.
+| **Market making** | ✅ Implemented | Avellaneda-Stoikov quoting off a vol surface, Poisson flow, delta hedging, P&L attributed to spread vs inventory vs hedge |
 
 ## Quick start
 
@@ -52,6 +49,8 @@ backend/
       arbitrage.py           six families of static no-arbitrage check
       strategy.py            multi-leg payoff, breakevens, extremes
       presets.py             canonical structures built at fair value
+      surface.py             vol surface in total variance, with arb checks
+      mm/                    inventory-aware quoting and session simulation
       marketdata/            ChainFeed protocol + seeded simulator
     api/                     pydantic schemas + routers
     main.py                  app, CORS, /api mount
@@ -119,6 +118,36 @@ leg at once is the classic calendar-spread error: the two calls cancel exactly
 and the diagram collapses to a flat line at minus the debit, erasing the tent
 that is the whole structure.
 
+## What the Market making tab gives you
+
+Quoting after **Avellaneda-Stoikov**, which separates two ideas that are easy to
+conflate. *Skew* is where to centre the quotes: the mid shifts away from fair
+against the inventory, so a long book marks its own quotes down and attracts the
+flow that flattens it. That is not a forecast of direction — it is a statement
+about the maker's own risk, and it works even when the underlying is a pure
+martingale. *Width* is how far apart to put them, growing with inventory risk
+and with how patient the flow is.
+
+**P&L is decomposed rather than reported as one number**, because the single
+number hides the only question worth asking: was the money made capturing
+spread, or by being accidentally long a market that went up? Those look
+identical on a P&L line and could not be more different.
+
+The sweep is where the model earns its keep — averaged over 12 paths per
+setting, on defaults:
+
+| risk aversion | fills | spread | inventory | hedge | total | peak inventory |
+|---|---|---|---|---|---|---|
+| 0.00 (naive) | 184.7 | 1.85 | +8.32 | −9.00 | 1.17 | 17.7 |
+| **0.05** | 109.0 | **7.38** | −0.09 | −0.56 | **6.73** | 3.6 |
+| 0.40 | 35.2 | 2.52 | −0.21 | +0.05 | 2.37 | 2.4 |
+| 1.60 | 10.0 | 0.80 | −0.23 | +0.18 | 0.74 | 1.6 |
+
+The naive maker wins the most fills and finishes with the least money: it quotes
+at the floor, accumulates 17.7 units of inventory, and spends 9.00 hedging what
+it accumulated. There is an **interior optimum** — caution pays, but only up to
+the point where the maker stops trading.
+
 ## Testing
 
 The maths is verified three independent ways: a textbook closed-form value, put-call
@@ -126,7 +155,7 @@ parity across six market regimes, and central finite differences against every
 analytic Greek (which is what catches unit-scaling mistakes).
 
 ```bash
-cd backend  && poetry run pytest        # 318 tests
+cd backend  && poetry run pytest        # 375 tests
 cd frontend && pnpm test:run            # 14 tests
 ```
 

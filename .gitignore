@@ -43,3 +43,6 @@ htmlcov/
 *.key
 *_rsa
 id_rsa*
+
+# Agent worktrees are transient checkouts, not project files
+.claude/worktrees/

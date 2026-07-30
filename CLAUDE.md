@@ -5,9 +5,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 An options market-making sandbox: a Python quantitative core exposed over FastAPI,
-driven by a React SPA. Four scenarios are separate tabs — **Pricer**,
-**Arbitrage** and **Strategy** are implemented; **Market making** is scaffolded
-(see its `ComingSoon` panel for the spec). Market data is simulated; there is
+driven by a React SPA. All four scenario tabs are implemented: **Pricer**,
+**Arbitrage**, **Strategy** and **Market making**. Market data is simulated; there is
 no live feed, but `core/marketdata/base.py` defines the `ChainFeed` protocol a
 live adapter would satisfy.
 
@@ -111,6 +110,19 @@ reaching the nearest horizon and *marks* the rest with Black-Scholes over their
 remaining life; the curve is then smooth, so roots are bisected on a grid and
 `StrategyAnalysis.exact` is False. Settling every leg at once flattens a
 calendar to a constant — if a payoff diagram goes flat, that is the bug.
+
+**Market-making time is in years, everywhere, including order flow.**
+`order_flow_intensity` is arrivals *per year*, matching `dt`. This looks strange
+(the default 6000 is ~24 a day) but a second time unit is how you get a
+simulation that silently never trades: an earlier default of 12 meant 0.24
+expected fills across a week-long session, and every P&L came back exactly zero.
+`test_the_default_parameters_actually_trade` is the regression.
+
+**A single market-making session is not evidence.** The naive maker frequently
+finishes ahead by being accidentally long a market that rose. Claims about
+quoting belong in `/marketmaking/sweep`, which averages seeds per setting;
+single-run tests should assert structure (attribution sums, skew opposes
+inventory) rather than profitability.
 
 **The market state vector is global.** `useMarketStore` (Zustand) holds spot, strike,
 rate, dividend yield, vol, expiry and option type. The Pricer writes it; the other
