@@ -10,7 +10,7 @@ const TABS = [
   { id: 'pricer', label: 'Pricer' },
   { id: 'arbitrage', label: 'Arbitrage' },
   { id: 'strategy', label: 'Strategy' },
-  { id: 'marketmaking', label: 'Market making', comingSoon: true },
+  { id: 'marketmaking', label: 'Market making' },
 ] as const satisfies readonly TabDef[]
 
 type TabId = (typeof TABS)[number]['id']
